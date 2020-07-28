@@ -1,5 +1,6 @@
 #AN
 *.avi
+*.csv
 r_s.png
 *an_*
 HR18-WFLW.pth
