@@ -1,3 +1,9 @@
+#AN
+*.avi
+r_s.png
+*an_*
+HR18-WFLW.pth
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
