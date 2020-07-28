@@ -9,6 +9,7 @@ import torch
 import scipy
 import scipy.misc
 import numpy as np
+import PIL
 
 
 MATCHED_PARTS = {
@@ -209,7 +210,7 @@ def crop(img, center, scale, output_size, rot=0):
         # Remove padding
         new_img = scipy.misc.imrotate(new_img, rot)
         new_img = new_img[pad:-pad, pad:-pad]
-    new_img = scipy.misc.imresize(new_img, output_size)
+    new_img = np.array(PIL.Image.fromarray(new_img.astype(np.uint8)).resize(output_size)).astype(np.uint8)
     return new_img
 
 
