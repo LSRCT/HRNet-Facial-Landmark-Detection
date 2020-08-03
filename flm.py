@@ -1,7 +1,10 @@
 
+from collections import OrderedDict
 import numpy as np
 import os
 import argparse
+
+from facenet_pytorch import MTCNN
 
 import torch
 import torch.nn as nn
@@ -47,6 +50,13 @@ class BSD_FLM:
             model.module.load_state_dict(state_dict)
         model.eval()
         self.model = model
+        
+        # init the stuff for facial boundary detection
+        device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+        print('Running on device: {}'.format(device))
+        self.fbb_model = MTCNN(device=device, select_largest=False, thresholds=[0.5, 0.6, 0.6]) 
+        #self.fbb_init = [315, 95, 500, 315]
+        self.fbb_init = []
 
     def inf_pic(self, pic):
         """
@@ -81,13 +91,59 @@ class BSD_FLM:
 
     def cut_fbb(self,pic):
         """
-        Cut the pic to the facial boundary box. TODO dont hardcode this
+        Cut the pic to the facial boundary box.
         :param pic: picture to cut. should be and ndarray
         :return: cut pic as ndarray
         """
-        pic = pic[80:330, 250:478]
+        # only update FBB if there is no existing FBBB
+        if len(self.fbb_init) == 0:
+            # Calculate facial boundary box
+            fbb_pred = self.fbb_model.detect(pic)
+            self.fbb_init = [int(x) for x in fbb_pred[0][0]]
+        #pic = pic[80:330, 300:508]
+        fbb = self.fbb_init
+        # margin so the person can move a bit
+        margin = 30
+        pic = pic[fbb[1]-margin:fbb[3]+margin, fbb[0]-margin:fbb[2]+margin]
         return pic
+        
 
+    def get_labels(self, path, length):
+        print(f"Calculating labels for {path}")
+        trig_file = path[:-4]+".trigger"
+        save_name = "flm_"+path.split("/")[-1][:-4]+".csv"
+        tf_cont = OrderedDict()
+        with open(trig_file) as tf:
+            for line in tf.readlines():
+                ls = line.strip("\n").split(",")
+                tf_cont[int(ls[1])] = float(ls[0])
+        print(tf_cont)
+        if 239 in tf_cont:
+            start =int((tf_cont[239]-tf_cont[1])*20)
+            stop = int((tf_cont[199]- tf_cont[1])*20)
+        else:
+            start = length
+            stop = length
+        labels = [0]*start+[1]*(stop-start)+[0]*(length-stop)
+        print(f"{start} frames off, {stop-start} frames on, {length-stop} frames off")
+        print(f"Done")
+        return labels
+
+
+    def save_XY_pair(self, x,y):
+        """
+        Convenience function to save a feature list plus a label list to csv
+        """
+        save_name = "flm_"+avi_path.split("/")[-1][:-4]+".csv"
+        print(f"Saving to csv {save_name}")
+        with open(save_name, "w") as fcsv:
+            header = "frame;"+"".join(["lm"+str(x)+";" for x in range(len(x[0]))])+"label"+"\n"
+            fcsv.write(header)
+            for frame_numb, lm in enumerate(x):
+                row = str(frame_numb)+";" + "".join([str(coord[0])+","+str(coord[1])+";" for coord  in lm]) +str(y[frame_numb]) + "\n"   
+                fcsv.write(row)
+        print(f"Done")
+        
 
     def proc_video(self, path, show=0, save_avi=0, save_csv=0):
         """
@@ -95,8 +151,14 @@ class BSD_FLM:
         :param path: Location of the video on hard disk
         :param show: Display the video with landmarks live.
         :param save_avi: Save the landmarks added to the original video as avi.
-        :param save_csv: Save the landmarks to a csv file.j
+        :param save_csv: Save the landmarks to a csv file.
         """
+        print(f"Processing {path}")
+        # create a ne boundary box every video
+        self.fbb_init = []
+        
+        # cv2 and Pillow use different color sutff
+        cv2.CAP_PROP_CONVERT_RGB = False
         cap = cv2.VideoCapture(path)
         if save_avi:
             save_name = "flm_"+path.split("/")[-1]
@@ -108,6 +170,7 @@ class BSD_FLM:
         # for every frame
         while ret:
             # crop it so only the face is tehre
+            frame = cv2.cvtColor(frame,cv2.COLOR_BGR2RGB)
             frame = self.cut_fbb(frame)
             # resize to correct shape
             pic = cv2.resize(frame, (256,256))
@@ -115,11 +178,13 @@ class BSD_FLM:
             preds = flm.inf_pic(pic)
             
             pred_list.append(preds)
-            print(f"Done with frame {len(pred_list)}")
+            if len(pred_list)%100 == 0:
+                print(f"Done with {len(pred_list)} Frames")
             # draw landmarks as circles
             if show or save_avi:
                 for pred in preds:
                     cv2.circle(pic, (pred[0], pred[1]), 1, (0,0,255), -1) 
+            pic = cv2.cvtColor(pic, cv2.COLOR_RGB2BGR)
             if save_avi:
                 out.write(pic)
             if show:
@@ -128,27 +193,25 @@ class BSD_FLM:
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
             ret, frame = cap.read()
-        cap.release()
-        
-        if save_csv:
-            save_name = "flm_"+path.split("/")[-1][:-4]+".csv"
-            print(f"Saving to csv {save_name}")
-            with open(save_name, "w") as fcsv:
-                header = "frame;"+"".join(["lm"+str(x)+";" for x in range(len(pred_list[0]))])+"\n"
-                fcsv.write(header)
-                for frame_numb, lm in enumerate(pred_list):
-                    row = str(frame_numb)+";" + "".join([str(coord)+";" for coord  in lm]) + "\n"   
-                    fcsv.write(row)
+        cap.release()        
         if show:
             cv2.destroyAllWindows()
+        print(f"Done")
+        return pred_list
 
 
 if __name__ == '__main__':
     cfg_file = "experiments/wflw/face_alignment_wflw_hrnet_w18.yaml"
     model_file = "HR18-WFLW.pth"
-    avi_path = "/media/lsrct/Data/BSDLAB/FacialLMs/resting_state/resting_state_block01.avi"
-    pic_path = "r_s.png"
     flm = BSD_FLM(cfg_file, model_file)
-    flm.proc_video(avi_path, save_csv=1)
-    #flm.inf_pic(pic_path)
+    for fnum in range(1,15):
+        if fnum >= 10:
+            fstr = fnum
+        else:
+            fstr = f"0{fnum}"
+        avi_path = f"/mnt/d/BSDLAB/FacialLMs/resting_state/resting_state_block{fstr}.avi"
+        print(avi_path)
+        features = flm.proc_video(avi_path, save_avi=1, show=0)
+        labels = flm.get_labels(avi_path, len(features))
+        flm.save_XY_pair(features,labels)
 
