@@ -13,46 +13,56 @@ def loadXY(path):
         # other ones are data
         for line in f:
             ls = line.strip("\n")
-            ls = ls.replace(".", "")
-            ls = ls.replace("[", "")
-            ls = ls.replace("]", "")
+            #ls = ls.replace(".", "")
+            #ls = ls.replace("[", "")
+            #ls = ls.replace("]", "")
             ls = ls.split(";")[1:]
             label= int(ls[-1])
-            ls = [[int(coord[:3].strip(" ")), int(coord[3:].strip(" "))] for coord in ls[:-1]]
+            #ls = [[int(coord[:3].strip(" ")), int(coord[3:].strip(" "))] for coord in ls[:-1]]
+            ls = [[float(x) for x in coord.split(",")] for coord in ls[:-1]]
+            print(ls)
             X.append(ls)
             Y.append(label)
     return np.array(X), np.array(Y)
 
 
 def preprocessXY(x,y):
-    new_x = []
-    for frame in x:
-        f_new = np.linalg.norm(frame, axis=1)
-        # center the face basically
-        f_new = f_new - np.mean(f_new)
-        new_x.append(f_new)
     # Lowpass filter to get rid of wiggling
-    new_x = uniform_filter1d(new_x, 10)
+    x = uniform_filter1d(x, 10, axis=0)
+    new_x = [] 
+    for frame in x:
+        f_new = frame
+        
+        # center the face basically
+        f_new = f_new - np.mean(f_new, axis=0)
+        
+        # account for being closer to camera
+        f_new = f_new.T
+        f_new[0] = f_new[0]/np.max(f_new[0])
+        f_new[1] = f_new[1]/np.max(f_new[1])
+        f_new = f_new.T
+
+        #f_new = np.linalg.norm(frame, axis=1)
+        f_new = f_new.flatten()
+        new_x.append(f_new)
     new_x = np.array(new_x)
     # Standard scale everything
     new_x = (new_x-np.mean(new_x, axis=0))/np.std(new_x, axis=0)
     return new_x,y
-
 
 def getXY_evalsplit():
     X_train = []
     y_train = []
     X_test = []
     y_test = []
-    for fnum in range(1,15):
-        if fnum==6:
-            continue
+    for fnum in range(1,3):
         if fnum >= 10:
             fstr = fnum
         else:
             fstr = f"0{fnum}"
         print(fstr)
-        x,y = loadXY(f"flm_XY/flm_resting_state_block{fstr}.csv") 
+        #x,y = loadXY(f"flm_XY/flm_resting_state_block{fstr}.csv") 
+        x,y = loadXY(f"flm_resting_state_block{fstr}.csv") 
 
         X_train.append(x[len(x)//4:])
         X_test.append(x[:len(x)//4])
@@ -73,9 +83,12 @@ print(f"X_test: {np.shape(x_e)}, y_test:{np.shape(y_e)}")
 print(f"Mean of x_train: {np.sum(np.mean(x_t, axis=0))}, std of x_train: {np.mean(np.std(x_t, axis=0))}")
 print(np.sum(y_t)/len(y_t), np.sum(y_e)/len(y_e))
 from sklearn.ensemble import RandomForestClassifier
-clf = RandomForestClassifier(n_estimators = 100, n_jobs=16)
+from sklearn.metrics import confusion_matrix
+clf = RandomForestClassifier(n_estimators = 500, n_jobs=16)
 clf = clf.fit(x_t, y_t)
 y_pred_t = clf.predict(x_t)
 y_pred = clf.predict(x_e)
 print('The Accuracy on the train set is %.2f%%' %(sum(y_t==y_pred_t)/len(y_t)*100))
 print('The Accuracy on the test set is %.2f%%' %(sum(y_e==y_pred)/len(y_e)*100))
+c_m = confusion_matrix(y_e, y_pred)
+print(c_m)
