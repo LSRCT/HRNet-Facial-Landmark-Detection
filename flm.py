@@ -103,7 +103,7 @@ class BSD_FLM:
         #pic = pic[80:330, 300:508]
         fbb = self.fbb_init
         # margin so the person can move a bit
-        margin = 30
+        margin = 50
         pic = pic[fbb[1]-margin:fbb[3]+margin, fbb[0]-margin:fbb[2]+margin]
         return pic
         
@@ -119,8 +119,8 @@ class BSD_FLM:
                 tf_cont[int(ls[1])] = float(ls[0])
         print(tf_cont)
         if 239 in tf_cont:
-            start =int((tf_cont[239]-tf_cont[1])*20)
-            stop = int((tf_cont[199]- tf_cont[1])*20)
+            start =int((tf_cont[239]-tf_cont[10])*20)
+            stop = int((tf_cont[199]- tf_cont[10])*20)
         else:
             start = length
             stop = length
@@ -130,11 +130,11 @@ class BSD_FLM:
         return labels
 
 
-    def save_XY_pair(self, x,y):
+    def save_XY_pair(self, x,y, og_filename):
         """
         Convenience function to save a feature list plus a label list to csv
         """
-        save_name = "flm_"+avi_path.split("/")[-1][:-4]+".csv"
+        save_name = "flm_"+og_filename.split("/")[-1][:-4]+".csv" # TODO path
         print(f"Saving to csv {save_name}")
         with open(save_name, "w") as fcsv:
             header = "frame;"+"".join(["lm"+str(x)+";" for x in range(len(x[0]))])+"label"+"\n"
@@ -144,6 +144,39 @@ class BSD_FLM:
                 fcsv.write(row)
         print(f"Done")
         
+
+    def save_labels(self, labels, og_filename):
+        """
+        Save labels to a csv file
+        """
+        save_name = "labels_"+og_filename.split("/")[-1][:-4]+".csv" 
+        print(f"Saving to csv {save_name}")
+        with open(save_name, "w") as fcsv:
+            header = "frame;"+"label"+"\n"
+            fcsv.write(header)
+            for frame_numb, Y in enumerate(labels):
+                row = str(frame_numb)+";"+ str(Y) + "\n"   
+                fcsv.write(row)
+        print(f"Done")
+
+        
+
+    def get_video_length(self, path):
+        """
+        Get the number of frames in a given video file.
+        Note that this is inefficient as TODO
+        :param path: Path to the video file
+        :return: Number of frames
+        """
+        frames = 0
+
+        cap = cv2.VideoCapture(path)
+        ret, frame = cap.read()
+        while ret:
+            frames += 1
+            ret, frame = cap.read()
+        cap.release()
+        return frames
 
     def proc_video(self, path, show=0, save_avi=0, save_csv=0):
         """
@@ -211,7 +244,9 @@ if __name__ == '__main__':
             fstr = f"0{fnum}"
         avi_path = f"/mnt/d/BSDLAB/FacialLMs/resting_state/resting_state_block{fstr}.avi"
         print(avi_path)
-        features = flm.proc_video(avi_path, save_avi=1, show=0)
-        labels = flm.get_labels(avi_path, len(features))
-        flm.save_XY_pair(features,labels)
+        #features = flm.proc_video(avi_path, save_avi=0, show=0)
+        n_frames = flm.get_video_length(avi_path)
+        labels = flm.get_labels(avi_path, n_frames)
+        flm.save_labels(labels, avi_path)
+        #flm.save_XY_pair(features,labels, avi_path)
 
