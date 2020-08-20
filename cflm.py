@@ -4,6 +4,7 @@ from scipy.ndimage import uniform_filter1d
 import numpy as np
 import sys, os
 import ast
+import cv2
 
 
 def loadX(path):
@@ -53,7 +54,9 @@ def preprocessXY(x,y):
         new_x.append(f_new)
     new_x = np.array(new_x)
     # Standard scale everything
-    new_x = (new_x-np.mean(new_x, axis=0))/np.std(new_x, axis=0)
+    x_mean = np.mean(new_x, axis=0)
+    x_std = np.std(new_x, axis=0)
+    new_x = (new_x-x_mean)/x_std
     return new_x,y
 
 
@@ -133,16 +136,18 @@ def getXY_exp3(XY_split):
         test_blocks = [5, 6, 9, 13, 14]
         train_blocks = [3,4,7,8,11, 12]
     elif XY_split == "eyesopen":
-        test_blocks= [5, 9, 13]
-        train_blocks = [3, 7, 11]
+        #test_blocks= [5, 9, 13]
+        train_blocks= [5, 9, 13]
+        test_blocks = [3, 7, 11]
+        #train_blocks = [3, 7, 11]
     elif XY_split == "eyesclosed":
         test_blocks = [8, 14]
         train_blocks = [4, 6, 12]
     elif XY_split == "probt":
         test_blocks = [13]
-        train_blocks = [3,5, 7, 9,11]
-        #train_blocks = [7, 9, 11]
-    return getXY_exp3_range(test_blocks, train_blocks)
+        #train_blocks = [3,5, 7, 9,11]
+        train_blocks = [3, 7, 11]
+    return test_blocks, train_blocks
 
 def getXY_exp3_range(test_b, train_b):
     """
@@ -154,6 +159,8 @@ def getXY_exp3_range(test_b, train_b):
     y_train = []
     X_test = []
     y_test = []
+    b_lengths_t= []
+    b_lengths_e= []
     for fnum in test_b+train_b:
         if fnum >= 10:
             fstr = fnum
@@ -178,19 +185,21 @@ def getXY_exp3_range(test_b, train_b):
         if fnum in test_b:
             X_test.append(x)
             y_test.append(y)
+            b_lengths_e.append(len(y))
         else:  
             X_train.append(x)
             y_train.append(y)
+            b_lengths_t.append(len(y))
 
     X_train = np.concatenate(X_train)
     X_test = np.concatenate(X_test)
     y_train = np.concatenate(y_train)
     y_test = np.concatenate(y_test)
-    return X_train, y_train, X_test, y_test
+    return X_train, y_train, X_test, y_test, b_lengths_t, b_lengths_e
 
 def ica_data(xt, xe):
     from sklearn.decomposition import FastICA
-    ica = FastICA(max_iter=500, whiten=False)
+    ica = FastICA(max_iter=1000, whiten=False)
     xt = ica.fit_transform(xt)
     xe = ica.transform(xe)
     xt = (xt-np.mean(xt, axis=0))/np.std(xt, axis=0)
@@ -208,80 +217,101 @@ def ica_data(xt, xe):
    #plt.show()
     return xt, xe
 
-def pca_data(xt):
+def pca_data(xt, xe):
     from sklearn.decomposition import PCA
     pca = PCA(n_components=30)
-    #xt = pca.fit_transform(xt)
-    pca.fit(xt)
-    xt = np.dot(xt, pca.components_[2:20].T)
+    xt = pca.fit_transform(xt)
+    xe = pca.transform(xe)
+    #xt = np.dot(xt, pca.components_[2:20].T)
     plt.plot(pca.explained_variance_ratio_)
     plt.title("PCA explained variance")
     plt.xlabel("Component")
     plt.ylabel("Explained variance in %")
     plt.show()
-    f_weights = pca.components_[2].reshape((-1,2))
+    f_weights = pca.components_[0].reshape((-1,2))
     f_weights = np.mean(f_weights, axis=1)
+    plt.title("Principal component 1")
+    plt.xlabel("Weight")
+    plt.ylabel("Feature")
     plt.plot(f_weights)
     plt.show()
-    return xt
+    return xt, xe
 
+    
+def save_clf(y_true, y_pred, csv_name):
+    y_pred = [f"{round(x[1],2)}" for x in y_pred]
+    save_name = csv_name
+    print(f"Saving to csv {save_name}")
+    with open(save_name, "w") as fcsv:
+        header = "frame;"+"label;"+"pred"+"\n"
+        fcsv.write(header)
+        for frame_numb, (Y, Y_p) in enumerate(zip(y_true, y_pred)):
+            row = str(frame_numb)+";"+ str(Y)+";" +str(Y_p)+ "\n"   
+            fcsv.write(row)
+    print(f"Done")
+    
+    
+
+### Prepare the data ###
 
 # full, no10, eyesopen, eyesclosed
-x_t, y_t, x_e, y_e = getXY_exp3("eyesopen")
+e_blocks, t_blocks = getXY_exp3("eyesopen")
+x_t, y_t, x_e, y_e, len_t, len_e = getXY_exp3_range(e_blocks, t_blocks)
+
 x_t, y_t = preprocessXY(x_t, y_t)
 
 x_e, y_e = preprocessXY(x_e, y_e)
 
-print(np.shape(x_t))
-x_t = pca_data(x_t)
-x_e = pca_data(x_e)
-x_t, x_e = ica_data(x_t, x_e)
+x_t, x_e = pca_data(x_t, x_e)
+#x_t, x_e = ica_data(x_t, x_e)
 print(np.shape(x_t))
 #x_e = ica_data(x_e)
 print(f"X_train: {np.shape(x_t)}, y_train:{np.shape(y_t)}")
 print(f"X_test: {np.shape(x_e)}, y_test:{np.shape(y_e)}")
 print(f"Mean of x_train: {np.sum(np.mean(x_t, axis=0))}, std of x_train: {np.mean(np.std(x_t, axis=0))}")
 print(np.sum(y_t)/len(y_t), np.sum(y_e)/len(y_e))
+
+
+### Classify ###
+
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import confusion_matrix
 clf = RandomForestClassifier(n_estimators=1000, n_jobs=16, min_impurity_decrease=0.005)
-#:clf = RandomForestClassifier(n_estimators=500, n_jobs=16)
 clf = clf.fit(x_t, y_t)
 y_pred_t = clf.predict(x_t)
 y_pred = clf.predict(x_e)
 print('The Accuracy on the train set is %.2f%%' %(sum(y_t==y_pred_t)/len(y_t)*100))
 print('The Accuracy on the test set is %.2f%%' %(sum(y_e==y_pred)/len(y_e)*100))
-
 prob= clf.predict_proba(x_e)
-plt.plot(y_e, label="Ground truth")
-plt.title("Predicted Probabilities test data (5, 9, 13)")
-#prob = prob[y_e==1]
-prob = prob.T[1].T
-ravg = 50
-prob = np.convolve(prob, np.ones(ravg)) / ravg
-plt.plot(prob, label="Predicted probability")
-plt.ylabel("P(y=1)")
-plt.xlabel("frame #")
-plt.legend(loc=1)
-plt.show()
+prob_t = clf.predict_proba(x_t)
 
-prob= clf.predict_proba(x_t)
-plt.title("Predicted Probabilities train data (3, 7, 11)")
-plt.plot(y_t, label="Ground truth")
-#prob = prob[y_e==1]
-prob = prob.T[1].T
-ravg = 50
-prob = np.convolve(prob, np.ones(ravg)) / ravg
-plt.plot(prob, label="Predicted probability")
-plt.ylabel("P(y=1)")
-plt.xlabel("frame #")
-plt.legend(loc=1)
-plt.show()
+exp_path = "exp3"
 
-c_m = confusion_matrix(y_e, y_pred)
-print(c_m)
+b_pos = 0
+for blk_num, (blk, b_len) in enumerate(zip(t_blocks, len_t)):
+    if blk < 10:
+        blk_str = f"0{blk}" 
+    else:
+        blk_str = f"{blk}" 
+    csv_p = f"{exp_path}/pred/pred_flm_block{blk_str}.csv"
+    blk_range = range(b_pos, b_pos+b_len)
+    b_pos += b_len
+    save_clf(y_t[blk_range], prob_t[blk_range], csv_p)
 
-# bootstrap
+b_pos = 0
+for blk_num, (blk, b_len) in enumerate(zip(e_blocks, len_e)):
+    if blk < 10:
+        blk_str = f"0{blk}" 
+    else:
+        blk_str = f"{blk}" 
+    csv_p = f"{exp_path}/pred/pred_flm_block{blk_str}.csv"
+    blk_range = range(b_pos, b_pos+b_len)
+    b_pos += b_len
+    save_clf(y_e[blk_range], prob[blk_range], csv_p)
+
+
+### Bootstrap ### 
+
 np.random.shuffle(y_e)
 np.random.shuffle(y_t)
 print('The BS on the train set is %.2f%%' %(sum(y_t==y_pred_t)/len(y_t)*100))
